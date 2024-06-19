@@ -1,21 +1,25 @@
 package de.rondiplomatico.spark.candy;
 
-import com.google.common.collect.Iterables;
 import de.rondiplomatico.spark.candy.base.SparkBase;
 import de.rondiplomatico.spark.candy.base.Utils;
 import de.rondiplomatico.spark.candy.base.data.Candy;
 import de.rondiplomatico.spark.candy.base.data.Color;
 import de.rondiplomatico.spark.candy.base.data.Crush;
 import de.rondiplomatico.spark.candy.base.data.Deco;
+import lombok.var;
+import org.apache.spark.SparkConf;
+import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.SparkSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Tuple2;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.time.LocalTime;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Exercises for the basic spark section of the course.
@@ -33,7 +37,7 @@ public class SparkBasics extends SparkBase {
      * Local field containing the cities map.
      * (Placed here for a specific demonstration around serializability and spark)
      */
-    private Map<String, String> cities = Utils.getHomeCities();
+    public static Map<String, String> cities = Utils.getHomeCities();
 
     /**
      * Configure your environment to run this class for section 2.
@@ -47,7 +51,8 @@ public class SparkBasics extends SparkBase {
         /**
          * E1: Generate crushes as RDD
          */
-        // JavaRDD<Crush> rdd = s.e1_crushRDD(1234);
+         JavaRDD<Crush> rdd = s.e1_crushRDD(60000);
+        log.info("JavaRDD data is: " +rdd);
 
         /*
          * TODO E1: Log the number of partitions and elements in the created RDD.
@@ -56,17 +61,19 @@ public class SparkBasics extends SparkBase {
         /**
          * E2: Filtering
          */
-        // s.e2_countCandiesSpark(rdd);
+         s.e2_countCandiesRDD(rdd);
 
         /**
          * E3: Grouping
          */
-        // s.e3_countByColorRDD(rdd);
+         s.e3_countByColorRDD(rdd);
 
         /**
          * E4: Lookup
          */
-        // s.e4_cityLookupRDD(rdd);
+        s.e4_cityLookupRDD(rdd);
+
+
     }
 
     /**
@@ -76,12 +83,15 @@ public class SparkBasics extends SparkBase {
      * @return the rdd
      */
     public JavaRDD<Crush> e1_crushRDD(int n) {
+
         /*
          * TODO E1: Create crush RDD
          *
          * Use the functions from FunctionalJava to create some crushes and parallelize them using the java spark context
          */
-        return null;
+       SparkBasics sparkBasics = new SparkBasics();
+       return sparkBasics.getJavaSparkContext().parallelize(FunctionalJava.e1_crush(n));
+
     }
 
     /**
@@ -95,13 +105,32 @@ public class SparkBasics extends SparkBase {
          *
          * Implement "How many red striped candies have been crushed?"
          */
-       
+        long res =crushes// stream() converts a Java collection to a java stream
+                .map(Crush::getCandy) // transforms the stream elements, here selecting the candy object of the crush
+                .filter(c -> c.getColor().equals(Color.RED)) // Filters a stream by a specified predicate
+                .filter(c -> c.getDeco().equals(Deco.HSTRIPES) || c.getDeco().equals(Deco.VSTRIPES))
+                .count();
+
+        log.info("The crush data contains {} red striped candies!", res);
 
         /*
          * TODO E2: Filtering
          *
          * Count how many wrapped candies have been crushed between 12-13 o'clock and log the results
          */
+        LocalTime startTime = LocalTime.of(12, 0);
+        LocalTime endTime = LocalTime.of(13, 0);
+
+        long wrappedCandies = crushes
+                .filter(crush -> {
+                    LocalTime crushTime = crush.getTime();
+                    return crushTime.isAfter(startTime) && crushTime.isBefore(endTime);
+                })
+                .map(Crush::getCandy)
+                .filter(c -> c.getDeco().equals(Deco.WRAPPED))
+                .count();
+
+        log.info("The crush data contains {} wrapped candies crushed between 12-13 o'clock!", wrappedCandies);
        
     }
 
@@ -120,6 +149,13 @@ public class SparkBasics extends SparkBase {
          *
          * Hint: Iterables::size is convenient should you need to count the number of elements of an iterator.
          */
+        Map<Color, Long> colorCounts = crushes.map(Crush::getCandy).groupBy(Candy::getColor)
+                .mapValues(Iterable::spliterator)
+                .mapValues(Spliterator::getExactSizeIfKnown)
+                .collectAsMap();
+
+        // Logging the results
+        colorCounts.forEach((color, count) -> log.info("The crush data contains candies  " + "Color: " + color + ", Count: " + count));
 
         /*
          * TODO E3: (Bonus question)
@@ -128,12 +164,23 @@ public class SparkBasics extends SparkBase {
          * - Avoid the groupBy() transformation - explore what better functions are available on JavaPairRDD!
          * - Can you also simplify the implementation of the first question similarly?
          */
-        
 
         /*
          * Fast variant: Let spark do the counting!
          */
-        
+
+
+        JavaPairRDD<Deco, Integer> decoCounts = crushes
+                .map(Crush::getCandy)
+                .filter(c -> c.getColor().equals(Color.BLUE))
+                .mapToPair(c -> new Tuple2<>(c.getDeco(), 1))
+                .reduceByKey(Integer::sum);
+
+        Map<Deco, Integer> result = new EnumMap<>(Deco.class);
+        result.putAll(decoCounts.collectAsMap());
+
+        result.forEach((x, y) -> log.info("Blue Candies in {} are crushed {} times", x, y));
+
     }
 
     /**
@@ -169,6 +216,7 @@ public class SparkBasics extends SparkBase {
          * - Log your results
          * - Run the code
          */
+        
 
         /*
          * TODO E4: Lookups
